@@ -17,6 +17,7 @@
 #include <string.h>
 #include <math.h>
 #include <pthread.h>
+#include <assert.h>
 
 #define MAX_STRING 100
 #define EXP_TABLE_SIZE 1000
@@ -48,6 +49,8 @@ clock_t start;
 int hs = 0, negative = 5;
 const int table_size = 1e8;
 int *table;
+
+unsigned long long *next_randoms;
 
 void InitUnigramTable() {
   int a, i;
@@ -259,6 +262,143 @@ void CreateBinaryTree() {
   free(parent_node);
 }
 
+real *wordvec;
+long long *bin;
+long long *parent_node;
+
+struct word_dist {
+    real distance;
+    int word;
+} *word_dists;
+
+int WordDistCompare(const void *a, const void *b) {
+    if (((struct word_dist *)a)->distance < ((struct word_dist *)b)->distance) {
+        return -1;
+    } else if (((struct word_dist *)a)->distance == ((struct word_dist *)b)->distance) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+void InitRebuildBinaryTree() {
+    long long a, from, to, left, pos;
+
+    wordvec = (real *)calloc(vocab_size * layer1_size, sizeof(real));
+    word_dists = (struct word_dist *)calloc(vocab_size, sizeof(struct word_dist));
+
+    bin = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
+    parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
+
+    from = 0; 
+    to = vocab_size - 1;
+
+    left = -1;
+    pos = vocab_size;
+    while (from < to) {
+        for (a = from; a < to; a+=2) {
+            parent_node[a] = pos;
+            parent_node[a + 1] = pos;
+            bin[a + 1] = 1;
+            pos++;
+        }
+
+        if (a == to) {
+            if (left != -1) {
+                parent_node[left] = pos;
+                parent_node[to] = pos;
+                pos++;
+                left = -1;
+            } else {
+                left = to;
+            }
+        }
+
+        from = to + 1;
+        to = pos - 1;
+    }
+
+    if (left != -1) {
+        parent_node[left] = pos;
+        parent_node[to] = pos;
+        pos++;
+    }
+    pos--;
+    assert(pos == 2*vocab_size - 2);
+}
+
+void ReBuildBinaryTree() {
+    char code[MAX_CODE_LENGTH];
+    long long point[MAX_CODE_LENGTH];
+    long long a, b, i;
+    long long max_count;
+    real len;
+    int word;
+
+    for (b = 0; b < vocab_size; b++) {
+        len = 0;
+        for (a = 0; a < layer1_size; a++) {
+            len += syn0[a + b * layer1_size] * syn0[a + b * layer1_size];
+        }
+        len = sqrt(len);
+        for (a = 0; a < layer1_size; a++) {
+            wordvec[a + b * layer1_size] = syn0[a + b * layer1_size] / len;
+        }
+    }
+
+    max_count = 0;
+    for (a = 0; a < vocab_size; a++) {
+        if (max_count < vocab[a].cn) {
+            max_count = vocab[a].cn;
+            b = a;
+        }
+    }
+
+    word_dists[b].word = b;
+    word_dists[b].distance = 1;
+    for (a = 0; a < vocab_size; a++) {
+        if (a == b) {
+            continue;
+        }
+        word_dists[a].word = a;
+        word_dists[a].distance = 0;
+        for (i = 0; i < layer1_size; i++) {
+            word_dists[a].distance += wordvec[i + a*layer1_size] * wordvec[i + b*layer1_size];
+        }
+    }
+
+    qsort(word_dists, vocab_size, sizeof(struct word_dist), WordDistCompare);
+
+    for (a = 0; a < vocab_size; a++) {
+        word = word_dists[a].word;
+        b = a;
+        i = 0;
+        while (1) {
+            code[i] = bin[b];
+            point[i] = b;
+            i++;
+            b = parent_node[b];
+            if (b == 2*vocab_size - 2) break;
+        }
+        vocab[word].codelen = i;
+        vocab[word].point[0] = 2*vocab_size - 2;
+        for (b = 0; b < i; b++) {
+            vocab[word].code[i - b - 1] = code[b];
+            vocab[word].point[i - b] = point[b] - vocab_size;
+        }
+    }
+
+    if (hs) {
+        for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++)
+            syn1[a * layer1_size + b] = 0;
+    }
+    if (negative>0) {
+        for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++)
+            syn1neg[a * layer1_size + b] = 0;
+    }
+
+}
+
 void LearnVocabFromTrainFile() {
   char word[MAX_STRING];
   FILE *fin;
@@ -357,13 +497,15 @@ void InitNet() {
     syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / (real)65536) - 0.5) / layer1_size;
   }
   CreateBinaryTree();
+  InitRebuildBinaryTree();
 }
 
 void *TrainModelThread(void *id) {
   long long a, b, d, cw, word, last_word, sentence_length = 0, sentence_position = 0;
   long long word_count = 0, last_word_count = 0, sen[MAX_SENTENCE_LENGTH + 1];
   long long l1, l2, c, target, label, local_iter = iter;
-  unsigned long long next_random = (long long)id;
+  long long this_word_count = 0;
+  int tid = (int)(long)id;
   real f, g;
   clock_t now;
   real *neu1 = (real *)calloc(layer1_size, sizeof(real));
@@ -373,12 +515,14 @@ void *TrainModelThread(void *id) {
   while (1) {
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
+      this_word_count += word_count - last_word_count;
       last_word_count = word_count;
       if ((debug_mode > 1)) {
         now=clock();
         printf("%cAlpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, alpha,
          word_count_actual / (real)(iter * train_words + 1) * 100,
-         word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
+         //word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
+         this_word_count / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
         fflush(stdout);
       }
       alpha = starting_alpha * (1 - word_count_actual / (real)(iter * train_words + 1));
@@ -394,8 +538,8 @@ void *TrainModelThread(void *id) {
         // The subsampling randomly discards frequent words while keeping the ranking same
         if (sample > 0) {
           real ran = (sqrt(vocab[word].cn / (sample * train_words)) + 1) * (sample * train_words) / vocab[word].cn;
-          next_random = next_random * (unsigned long long)25214903917 + 11;
-          if (ran < (next_random & 0xFFFF) / (real)65536) continue;
+          next_randoms[tid] = next_randoms[tid] * (unsigned long long)25214903917 + 11;
+          if (ran < (next_randoms[tid] & 0xFFFF) / (real)65536) continue;
         }
         sen[sentence_length] = word;
         sentence_length++;
@@ -406,7 +550,8 @@ void *TrainModelThread(void *id) {
     if (feof(fi) || (word_count > train_words / num_threads)) {
       word_count_actual += word_count - last_word_count;
       local_iter--;
-      if (local_iter == 0) break;
+      //if (local_iter == 0) break;
+      break;
       word_count = 0;
       last_word_count = 0;
       sentence_length = 0;
@@ -417,8 +562,8 @@ void *TrainModelThread(void *id) {
     if (word == -1) continue;
     for (c = 0; c < layer1_size; c++) neu1[c] = 0;
     for (c = 0; c < layer1_size; c++) neu1e[c] = 0;
-    next_random = next_random * (unsigned long long)25214903917 + 11;
-    b = next_random % window;
+    next_randoms[tid] = next_randoms[tid] * (unsigned long long)25214903917 + 11;
+    b = next_randoms[tid] % window;
     if (cbow) {  //train the cbow architecture
       // in -> hidden
       cw = 0;
@@ -454,9 +599,9 @@ void *TrainModelThread(void *id) {
             target = word;
             label = 1;
           } else {
-            next_random = next_random * (unsigned long long)25214903917 + 11;
-            target = table[(next_random >> 16) % table_size];
-            if (target == 0) target = next_random % (vocab_size - 1) + 1;
+            next_randoms[tid] = next_randoms[tid] * (unsigned long long)25214903917 + 11;
+            target = table[(next_randoms[tid] >> 16) % table_size];
+            if (target == 0) target = next_randoms[tid] % (vocab_size - 1) + 1;
             if (target == word) continue;
             label = 0;
           }
@@ -510,9 +655,9 @@ void *TrainModelThread(void *id) {
             target = word;
             label = 1;
           } else {
-            next_random = next_random * (unsigned long long)25214903917 + 11;
-            target = table[(next_random >> 16) % table_size];
-            if (target == 0) target = next_random % (vocab_size - 1) + 1;
+            next_randoms[tid] = next_randoms[tid] * (unsigned long long)25214903917 + 11;
+            target = table[(next_randoms[tid] >> 16) % table_size];
+            if (target == 0) target = next_randoms[tid] % (vocab_size - 1) + 1;
             if (target == word) continue;
             label = 0;
           }
@@ -544,7 +689,10 @@ void *TrainModelThread(void *id) {
 void TrainModel() {
   long a, b, c, d;
   FILE *fo;
+  long long local_iter = iter;
   pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
+  next_randoms = (unsigned long long *)malloc(num_threads * sizeof(unsigned long long));
+  for (a = 0; a < num_threads; a++) next_randoms[a] = a;
   printf("Starting training using file %s\n", train_file);
   starting_alpha = alpha;
   if (read_vocab_file[0] != 0) ReadVocab(); else LearnVocabFromTrainFile();
@@ -552,9 +700,15 @@ void TrainModel() {
   if (output_file[0] == 0) return;
   InitNet();
   if (negative > 0) InitUnigramTable();
-  start = clock();
-  for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
-  for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
+  while(1) {
+      start = clock();
+      printf("\nIter: %lld/%lld\n", iter - local_iter, iter);
+      for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
+      for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
+      ReBuildBinaryTree();
+      local_iter--;
+      if (local_iter == 0) break;
+  }
   fo = fopen(output_file, "wb");
   if (classes == 0) {
     // Save the word vectors
