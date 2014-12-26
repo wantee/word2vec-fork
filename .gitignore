@@ -1,0 +1,12 @@
+compute-accuracy
+distance
+text8*
+vectors.bin
+vocab
+word-analogy
+word2phrase
+word2vec
+
+*~
+*.swp
+
