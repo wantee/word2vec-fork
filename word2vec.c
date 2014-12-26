@@ -817,6 +817,8 @@ int main(int argc, char **argv) {
     printf("\t\tSet the starting learning rate; default is 0.025 for skip-gram and 0.05 for CBOW\n");
     printf("\t-classes <int>\n");
     printf("\t\tOutput word classes rather than word vectors; default number of classes is 0 (vectors are written)\n");
+    printf("\t-rebuild <int>\n");
+    printf("\t\tRebuild binary tree every <int> iteration; default is 1\n");
     printf("\t-debug <int>\n");
     printf("\t\tSet the debug mode (default = 2 = more info during training)\n");
     printf("\t-binary <int>\n");
