@@ -41,7 +41,7 @@ struct vocab_word *vocab;
 int binary = 0, cbow = 1, debug_mode = 2, window = 5, min_count = 5, num_threads = 12, min_reduce = 1;
 int *vocab_hash;
 long long vocab_max_size = 1000, vocab_size = 0, layer1_size = 100;
-long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0;
+long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0, rebuild = 1;
 real alpha = 0.025, starting_alpha, sample = 1e-3;
 real *syn0, *syn1, *syn1neg, *expTable;
 clock_t start;
@@ -287,6 +287,10 @@ void InitRebuildBinaryTree() {
     wordvec = (real *)calloc(vocab_size * layer1_size, sizeof(real));
     word_dists = (struct word_dist *)calloc(vocab_size, sizeof(struct word_dist));
 
+    for (a = 0; a < vocab_size; a++) {
+        word_dists[a].word = a;
+    }
+
     bin = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
     parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
 
@@ -325,13 +329,13 @@ void InitRebuildBinaryTree() {
     }
     pos--;
     assert(pos == 2*vocab_size - 2);
+
 }
 
 void ReBuildBinaryTree() {
     char code[MAX_CODE_LENGTH];
     long long point[MAX_CODE_LENGTH];
     long long a, b, i;
-    long long max_count;
     real len;
     int word;
 
@@ -346,24 +350,15 @@ void ReBuildBinaryTree() {
         }
     }
 
-    max_count = 0;
+    // word 1 is the most frequent word except </s>, as there may be no </s> in training corpus
+    word_dists[1].distance = 1;
     for (a = 0; a < vocab_size; a++) {
-        if (max_count < vocab[a].cn) {
-            max_count = vocab[a].cn;
-            b = a;
-        }
-    }
-
-    word_dists[b].word = b;
-    word_dists[b].distance = 1;
-    for (a = 0; a < vocab_size; a++) {
-        if (a == b) {
+        if (a == 1) {
             continue;
         }
-        word_dists[a].word = a;
         word_dists[a].distance = 0;
         for (i = 0; i < layer1_size; i++) {
-            word_dists[a].distance += wordvec[i + a*layer1_size] * wordvec[i + b*layer1_size];
+            word_dists[a].distance += wordvec[i + a*layer1_size] * wordvec[i + 1*layer1_size];
         }
     }
 
@@ -689,7 +684,7 @@ void *TrainModelThread(void *id) {
 void TrainModel() {
   long a, b, c, d;
   FILE *fo;
-  long long local_iter = iter;
+  long long local_iter = 0;
   pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
   next_randoms = (unsigned long long *)malloc(num_threads * sizeof(unsigned long long));
   for (a = 0; a < num_threads; a++) next_randoms[a] = a;
@@ -700,14 +695,27 @@ void TrainModel() {
   if (output_file[0] == 0) return;
   InitNet();
   if (negative > 0) InitUnigramTable();
-  while(1) {
+  while(local_iter < iter) {
       start = clock();
-      printf("\nIter: %lld/%lld\n", iter - local_iter, iter);
+      if (debug_mode > 1) {
+          printf("Iter: %lld/%lld\n", local_iter + 1, iter);
+      }
       for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
       for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
-      ReBuildBinaryTree();
-      local_iter--;
-      if (local_iter == 0) break;
+
+      if (local_iter == iter - 1) break;
+
+      if (debug_mode > 1) {
+          printf("\n");
+      }
+      if (local_iter % rebuild == 0) { // always rebuild after the first iter
+          if (debug_mode > 1) {
+              printf("Rebuilding Binary Tree\n");
+          }
+          ReBuildBinaryTree();
+      }
+
+      local_iter++;
   }
   fo = fopen(output_file, "wb");
   if (classes == 0) {
@@ -844,6 +852,7 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-iter", argc, argv)) > 0) iter = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
+  if ((i = ArgPos((char *)"-rebuild", argc, argv)) > 0) rebuild = atoi(argv[i + 1]);
   vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
   vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int));
   expTable = (real *)malloc((EXP_TABLE_SIZE + 1) * sizeof(real));
