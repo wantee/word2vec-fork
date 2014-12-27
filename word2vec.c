@@ -263,8 +263,14 @@ void CreateBinaryTree() {
 }
 
 real *wordvec;
-long long *bin;
-long long *parent_node;
+long long cur_iter;
+long long cur_word_count;
+
+struct word_code {
+    int codelen;
+    char code[MAX_CODE_LENGTH];
+    int point[MAX_CODE_LENGTH];
+} *word_codes;
 
 struct word_dist {
     real distance;
@@ -282,16 +288,21 @@ int WordDistCompare(const void *a, const void *b) {
 }
 
 void InitRebuildBinaryTree() {
-    long long a, from, to, left, pos;
+    char code[MAX_CODE_LENGTH];
+    long long point[MAX_CODE_LENGTH];
+    long long a, b, i, from, to, left, pos;
+    long long *binary;
+    long long *parent_node;
 
     wordvec = (real *)calloc(vocab_size * layer1_size, sizeof(real));
     word_dists = (struct word_dist *)calloc(vocab_size, sizeof(struct word_dist));
+    word_codes = (struct word_code *)calloc(vocab_size, sizeof(struct word_code));
 
     for (a = 0; a < vocab_size; a++) {
         word_dists[a].word = a;
     }
 
-    bin = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
+    binary = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
     parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
 
     from = 0; 
@@ -303,7 +314,7 @@ void InitRebuildBinaryTree() {
         for (a = from; a < to; a+=2) {
             parent_node[a] = pos;
             parent_node[a + 1] = pos;
-            bin[a + 1] = 1;
+            binary[a + 1] = 1;
             pos++;
         }
 
@@ -330,11 +341,29 @@ void InitRebuildBinaryTree() {
     pos--;
     assert(pos == 2*vocab_size - 2);
 
+    for (a = 0; a < vocab_size; a++) {
+        b = a;
+        i = 0;
+        while (1) {
+            code[i] = binary[b];
+            point[i] = b;
+            i++;
+            b = parent_node[b];
+            if (b == 2*vocab_size - 2) break;
+        }
+        word_codes[a].codelen = i;
+        word_codes[a].point[0] = 2*vocab_size - 2;
+        for (b = 0; b < i; b++) {
+            word_codes[a].code[i - b - 1] = code[b];
+            word_codes[a].point[i - b] = point[b] - vocab_size;
+        }
+    }
+
+    free(parent_node);
+    free(binary);
 }
 
 void ReBuildBinaryTree() {
-    char code[MAX_CODE_LENGTH];
-    long long point[MAX_CODE_LENGTH];
     long long a, b, i;
     real len;
     int word;
@@ -366,20 +395,13 @@ void ReBuildBinaryTree() {
 
     for (a = 0; a < vocab_size; a++) {
         word = word_dists[a].word;
-        b = a;
-        i = 0;
-        while (1) {
-            code[i] = bin[b];
-            point[i] = b;
-            i++;
-            b = parent_node[b];
-            if (b == 2*vocab_size - 2) break;
+        if (word == a) {
+            continue;
         }
-        vocab[word].codelen = i;
-        vocab[word].point[0] = 2*vocab_size - 2;
-        for (b = 0; b < i; b++) {
-            vocab[word].code[i - b - 1] = code[b];
-            vocab[word].point[i - b] = point[b] - vocab_size;
+        vocab[word].codelen = word_codes[a].codelen;
+        for (b = 0; b < word_codes[a].codelen; b++) {
+            vocab[word].code[b] = word_codes[a].code[b];
+            vocab[word].point[b] = word_codes[a].point[b];
         }
     }
 
@@ -492,14 +514,15 @@ void InitNet() {
     syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / (real)65536) - 0.5) / layer1_size;
   }
   CreateBinaryTree();
-  InitRebuildBinaryTree();
+  if (rebuild > 0) {
+      InitRebuildBinaryTree();
+  }
 }
 
 void *TrainModelThread(void *id) {
   long long a, b, d, cw, word, last_word, sentence_length = 0, sentence_position = 0;
   long long word_count = 0, last_word_count = 0, sen[MAX_SENTENCE_LENGTH + 1];
-  long long l1, l2, c, target, label, local_iter = iter;
-  long long this_word_count = 0;
+  long long l1, l2, c, target, label; //, local_iter = iter;
   int tid = (int)(long)id;
   real f, g;
   clock_t now;
@@ -510,14 +533,13 @@ void *TrainModelThread(void *id) {
   while (1) {
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
-      this_word_count += word_count - last_word_count;
+      cur_word_count += word_count - last_word_count;
       last_word_count = word_count;
       if ((debug_mode > 1)) {
         now=clock();
-        printf("%cAlpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, alpha,
+        printf("%cIter: %lld/%lld Alpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, cur_iter + 1, iter, alpha,
          word_count_actual / (real)(iter * train_words + 1) * 100,
-         //word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
-         this_word_count / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
+         cur_word_count / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
         fflush(stdout);
       }
       alpha = starting_alpha * (1 - word_count_actual / (real)(iter * train_words + 1));
@@ -544,14 +566,14 @@ void *TrainModelThread(void *id) {
     }
     if (feof(fi) || (word_count > train_words / num_threads)) {
       word_count_actual += word_count - last_word_count;
-      local_iter--;
-      //if (local_iter == 0) break;
       break;
-      word_count = 0;
-      last_word_count = 0;
-      sentence_length = 0;
-      fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);
-      continue;
+      //local_iter--;
+      //if (local_iter == 0) break;
+      //word_count = 0;
+      //last_word_count = 0;
+      //sentence_length = 0;
+      //fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);
+      //continue;
     }
     word = sen[sentence_position];
     if (word == -1) continue;
@@ -684,7 +706,6 @@ void *TrainModelThread(void *id) {
 void TrainModel() {
   long a, b, c, d;
   FILE *fo;
-  long long local_iter = 0;
   pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
   next_randoms = (unsigned long long *)malloc(num_threads * sizeof(unsigned long long));
   for (a = 0; a < num_threads; a++) next_randoms[a] = a;
@@ -695,27 +716,24 @@ void TrainModel() {
   if (output_file[0] == 0) return;
   InitNet();
   if (negative > 0) InitUnigramTable();
-  while(local_iter < iter) {
-      start = clock();
-      if (debug_mode > 1) {
-          printf("Iter: %lld/%lld\n", local_iter + 1, iter);
-      }
+  cur_iter = 0;
+  while(cur_iter < iter) {
+      cur_word_count = 0;
+      start=clock();
       for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
       for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
 
-      if (local_iter == iter - 1) break;
+      if (cur_iter == iter - 1) break;
 
-      if (debug_mode > 1) {
-          printf("\n");
-      }
-      if (local_iter % rebuild == 0) { // always rebuild after the first iter
+      if (rebuild > 0 
+            && cur_iter % rebuild == 0) { // always rebuild after the first iter
           if (debug_mode > 1) {
-              printf("Rebuilding Binary Tree\n");
+              printf("\nRebuilding Binary Tree\n");
           }
           ReBuildBinaryTree();
       }
 
-      local_iter++;
+      cur_iter++;
   }
   fo = fopen(output_file, "wb");
   if (classes == 0) {
