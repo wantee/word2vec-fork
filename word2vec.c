@@ -348,7 +348,7 @@ void InitRebuildBinaryTree() {
             if (b == 2*vocab_size - 2) break;
         }
         word_codes[a].codelen = i;
-        word_codes[a].point[0] = 2*vocab_size - 2;
+        word_codes[a].point[0] = vocab_size - 2;
         for (b = 0; b < i; b++) {
             word_codes[a].code[i - b - 1] = code[b];
             word_codes[a].point[i - b] = point[b] - vocab_size;
@@ -438,9 +438,6 @@ void ReBuildBinaryTree() {
     
     for (a = 0; a < vocab_size; a++) {
         word = word_dists[a].word;
-        if (word == a) {
-            continue;
-        }
         vocab[word].codelen = word_codes[a].codelen;
         for (b = 0; b < word_codes[a].codelen; b++) {
             vocab[word].code[b] = word_codes[a].code[b];
