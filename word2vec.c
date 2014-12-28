@@ -298,10 +298,6 @@ void InitRebuildBinaryTree() {
     word_dists = (struct word_dist *)calloc(vocab_size, sizeof(struct word_dist));
     word_codes = (struct word_code *)calloc(vocab_size, sizeof(struct word_code));
 
-    for (a = 0; a < vocab_size; a++) {
-        word_dists[a].word = a;
-    }
-
     binary = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
     parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
 
@@ -379,6 +375,10 @@ void ReBuildBinaryTree() {
         }
     }
 
+    for (a = 0; a < vocab_size; a++) {
+        word_dists[a].word = a;
+    }
+
     // word 1 is the most frequent word except </s>, as there may be no </s> in training corpus
     word_dists[1].distance = 1;
     for (a = 0; a < vocab_size; a++) {
@@ -393,6 +393,49 @@ void ReBuildBinaryTree() {
 
     qsort(word_dists, vocab_size, sizeof(struct word_dist), WordDistCompare);
 
+#if 0
+    for (a = vocab_size - 1; a > 0; a-=2) {
+        float f = 0;
+        for (i = 0; i < layer1_size; i++) {
+           f += wordvec[i + word_dists[a].word*layer1_size] * wordvec[i + word_dists[a-1].word*layer1_size];
+        }
+        //fprintf(stderr, "%lld: %f\n", a, word_dists[a].distance);
+        fprintf(stderr, "A: %lld-%lld: %f\n", a, a-1, f);
+    }
+#endif
+    
+    for (a = vocab_size - 1; a > 0; a--) {
+        real max = -1;
+        int maxi = -1;
+        int t;
+        for (b = a - 1; b >= 0 && b > a - 10; b--) {
+            real d = 0;
+            int w = word_dists[b].word;
+            int w1 = word_dists[a].word;
+            for (i = 0; i < layer1_size; i++) {
+                d+= wordvec[i + w1*layer1_size] * wordvec[i + w*layer1_size];
+            }
+            if (max < d) {
+                max = d;
+                maxi = b;
+            }
+        }
+        t = word_dists[a - 1].word;
+        word_dists[a - 1].word = word_dists[maxi].word;
+        word_dists[maxi].word = t;
+    }
+
+#if 0
+    for (a = vocab_size - 1; a > 0; a-=2) {
+        float f = 0;
+        for (i = 0; i < layer1_size; i++) {
+           f += wordvec[i + word_dists[a].word*layer1_size] * wordvec[i + word_dists[a-1].word*layer1_size];
+        }
+        //fprintf(stderr, "%lld: %f\n", a, word_dists[a].distance);
+        fprintf(stderr, "B: %lld-%lld: %f\n", a, a-1, f);
+    }
+#endif
+    
     for (a = 0; a < vocab_size; a++) {
         word = word_dists[a].word;
         if (word == a) {

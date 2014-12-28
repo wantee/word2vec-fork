@@ -10,3 +10,4 @@ word2vec
 *~
 *.swp
 
+*.dSYM
