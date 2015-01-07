@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="description" content="Word2vec-fork : Extensions to Tomas&#39;s word2vec">
+
+    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
+
+    <title>Word2vec-fork</title>
+  </head>
+
+  <body>
+
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/wantee/word2vec-fork">View on GitHub</a>
+
+          <h1 id="project_title">Word2vec-fork</h1>
+          <h2 id="project_tagline">Extensions to Tomas&#39;s word2vec</h2>
+
+            <section id="downloads">
+              <a class="zip_download_link" href="https://github.com/wantee/word2vec-fork/zipball/master">Download this project as a .zip file</a>
+              <a class="tar_download_link" href="https://github.com/wantee/word2vec-fork/tarball/master">Download this project as a tar.gz file</a>
+            </section>
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <h1>
+<a id="extensions-to-tomass-word2vec" class="anchor" href="#extensions-to-tomass-word2vec" aria-hidden="true"><span class="octicon octicon-link"></span></a>Extensions to Tomas's word2vec</h1>
+
+<p>This project makes some extension to the <a href="http://code.google.com/p/word2vec/">word2vec tool</a>.</p>
+
+<h2>
+<a id="binary-tree-for-hs-using-word-embedding-info" class="anchor" href="#binary-tree-for-hs-using-word-embedding-info" aria-hidden="true"><span class="octicon octicon-link"></span></a>Binary Tree for HS using word embedding info</h2>
+
+<p>Rebuild the binary tree every several iterations, using the temporary word embedding vectors.
+Get better performance than the original HS, with a little overhead of speed.</p>
+
+<h3>
+<a id="benchmark" class="anchor" href="#benchmark" aria-hidden="true"><span class="octicon octicon-link"></span></a>Benchmark</h3>
+
+<p>Tests running on a 12-core CPU, parameters are all the same in the original scripts, except the '-threads' is set to 12. Baselines are using the original word2vec tool.</p>
+
+<h4>
+<a id="word-accuracy" class="anchor" href="#word-accuracy" aria-hidden="true"><span class="octicon octicon-link"></span></a>Word accuracy</h4>
+
+<p>Using command:</p>
+
+<pre><code>./word2vec -train text8 -output vectors.bin -cbow 1 -size 200 -window 8 -negative 25 -hs 0 -sample 1e-4 -threads 12 -binary 1 -iter 15
+./compute-accuracy vectors.bin 30000 &lt; questions-words.txt
+</code></pre>
+
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Total accuracy(%)</th>
+<th>Semantic accuracy(%)</th>
+<th>Syntactic accuracy(%)</th>
+<th>Speed(kwords/s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Neg-25</td>
+<td>52.74</td>
+<td>57.35</td>
+<td>50.42</td>
+<td>98.49</td>
+</tr>
+<tr>
+<td>Neg-5</td>
+<td>45.22</td>
+<td>43.04</td>
+<td>46.31</td>
+<td>322.00</td>
+</tr>
+<tr>
+<td>HS</td>
+<td>34.39</td>
+<td>35.22</td>
+<td>33.97</td>
+<td>186.09</td>
+</tr>
+<tr>
+<td>HS-rebuild</td>
+<td>42.97</td>
+<td>47.67</td>
+<td>40.60</td>
+<td>184.90</td>
+</tr>
+</tbody>
+</table>
+
+<h4>
+<a id="phrase-accuracy" class="anchor" href="#phrase-accuracy" aria-hidden="true"><span class="octicon octicon-link"></span></a>Phrase accuracy</h4>
+
+<p>Using command:</p>
+
+<pre><code>./word2vec -train news.2012.en.shuffled-norm1-phrase1 -output vectors-phrase.bin -cbow 1 -size 200 -window 10 -negative 25 -hs 0 -sample 1e-5 -threads 12 -binary 1 -iter 15
+./compute-accuracy vectors-phrase.bin &lt; questions-phrases.txt
+</code></pre>
+
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Accuracy(%)</th>
+<th>Speed(kwords/s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Neg-25</td>
+<td>35.42</td>
+<td>139.99</td>
+</tr>
+<tr>
+<td>Neg-5</td>
+<td>23.45</td>
+<td>453.07</td>
+</tr>
+<tr>
+<td>HS</td>
+<td>12.80</td>
+<td>244.34</td>
+</tr>
+<tr>
+<td>HS-rebuild</td>
+<td>24.88</td>
+<td>224.48</td>
+</tr>
+</tbody>
+</table>
+
+<h3>
+<a id="todo" class="anchor" href="#todo" aria-hidden="true"><span class="octicon octicon-link"></span></a>Todo</h3>
+
+<p>Performance is still worse than NEG mothod. Consider a way to allow multiple codes per word(like <a href="https://www.cs.toronto.edu/%7Eamnih/papers/hlbl_final.pdf">this paper</a>, which may improve the performance.</p>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+        <p class="copyright">Word2vec-fork maintained by <a href="https://github.com/wantee">wantee</a></p>
+        <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
+      </footer>
+    </div>
+
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-58316654-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+
+  </body>
+</html>
